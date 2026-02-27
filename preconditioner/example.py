@@ -1,5 +1,7 @@
 import numpy as np
-from preconditioner import Preconditioner, PreconditionerWorkbenchV2, SolverResult
+from preconditioner import (Preconditioner,
+                            PreconditionerWorkbenchV2,
+                            SolverResult)
 
 wb = PreconditionerWorkbenchV2(register_defaults=False)
 

@@ -6,12 +6,17 @@ from typing import Iterable, Literal, Optional, Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-from .matrices import MatrixFamily
-from .metrics import condition_number
-from .preconditioners import Preconditioner
+try:
+    from .matrices import MatrixFamily
+    from .metrics import condition_number
+    from .preconditioners import Preconditioner
+except ImportError:
+    from matrices import MatrixFamily  # type: ignore
+    from metrics import condition_number  # type: ignore
+    from preconditioners import Preconditioner  # type: ignore
 
 
-Array = NDArray[np.float64]
+Array = NDArray[np.generic]
 TargetKind = Literal["inverse", "pinv", "diagonal_inverse"]
 
 
@@ -37,6 +42,7 @@ class RidgeInverseApproximator:
         self.ridge = float(ridge)
         self.add_bias = bool(add_bias)
         self._weights: Optional[Array] = None
+        self._dtype: np.dtype = np.dtype(np.float64)
 
     def fit(self, matrices: Sequence[Array], targets: Sequence[Array]) -> "RidgeInverseApproximator":
         if len(matrices) == 0 or len(targets) == 0:
@@ -44,12 +50,14 @@ class RidgeInverseApproximator:
         if len(matrices) != len(targets):
             raise ValueError("matrices and targets must have equal length")
 
-        X = np.column_stack([self._features(A) for A in matrices])
-        Y = np.column_stack([T.reshape(-1) for T in targets])
-        gram = X @ X.T
-        reg = self.ridge * np.eye(gram.shape[0], dtype=np.float64)
-        rhs = (Y @ X.T).T
-        self._weights = np.linalg.solve((gram + reg).T, rhs).T
+        dtype = np.result_type(*(np.asarray(A).dtype for A in matrices), *(np.asarray(T).dtype for T in targets))
+        self._dtype = np.dtype(dtype)
+        X = np.column_stack([self._features(np.asarray(A, dtype=self._dtype)) for A in matrices])
+        Y = np.column_stack([np.asarray(T, dtype=self._dtype).reshape(-1) for T in targets])
+        gram = X @ X.conj().T
+        reg = self.ridge * np.eye(gram.shape[0], dtype=self._dtype)
+        rhs = Y @ X.conj().T
+        self._weights = np.linalg.solve(gram + reg, rhs.T).T
         return self
 
     def predict_inverse(self, A: Array) -> Array:
@@ -61,20 +69,26 @@ class RidgeInverseApproximator:
     def as_preconditioner(self, A: Array, *, name: str = "RidgeApprox") -> Preconditioner:
         P = self.predict_inverse(A)
 
-        def apply(x: NDArray[np.float64]) -> NDArray[np.float64]:
+        def apply(x: NDArray[np.generic]) -> NDArray[np.generic]:
             return P @ x
 
-        return Preconditioner(name=name, apply_vec=apply, size=self.matrix_size, matrix=P)
+        return Preconditioner(
+            name=name,
+            apply_vec=apply,
+            size=self.matrix_size,
+            matrix=P,
+            dtype=P.dtype,
+        )
 
-    def _features(self, A: Array) -> NDArray[np.float64]:
+    def _features(self, A: Array) -> NDArray[np.generic]:
         if A.shape != (self.matrix_size, self.matrix_size):
             raise ValueError(
                 f"Expected shape {(self.matrix_size, self.matrix_size)}, got {A.shape}"
             )
-        flat = A.reshape(-1).astype(np.float64, copy=False)
+        flat = A.reshape(-1).astype(self._dtype, copy=False)
         if not self.add_bias:
             return flat
-        return np.concatenate([flat, np.array([1.0], dtype=np.float64)])
+        return np.concatenate([flat, np.array([1.0], dtype=self._dtype)])
 
     def _check_fitted(self) -> None:
         if self._weights is None:
@@ -107,8 +121,8 @@ def build_inverse_dataset(
             T = np.diag(inv_d)
         else:
             raise ValueError(f"Unknown target kind: {target!r}")
-        matrices.append(np.asarray(A, dtype=np.float64))
-        targets.append(np.asarray(T, dtype=np.float64))
+        matrices.append(np.asarray(A))
+        targets.append(np.asarray(T))
     return matrices, targets
 
 
@@ -130,7 +144,7 @@ def evaluate_inverse_model(
             float(
                 condition_number(
                     P @ A,
-                    signed=signed_kappa,
+                    signed=signed_kappa and not np.iscomplexobj(P @ A),
                 )
             )
         )

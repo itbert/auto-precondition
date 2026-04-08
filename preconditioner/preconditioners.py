@@ -9,8 +9,8 @@ from scipy.linalg import lu_factor, lu_solve, circulant
 from scipy.sparse.linalg import LinearOperator
 
 
-Array = NDArray[np.float64]
-Vector = NDArray[np.float64]
+Array = NDArray[np.generic]
+Vector = NDArray[np.generic]
 
 
 class Preconditioner:
@@ -20,11 +20,15 @@ class Preconditioner:
         apply_vec: Callable[[Vector], Vector],
         size: int,
         matrix: Optional[Array] = None,
+        dtype: Optional[np.dtype] = None,
     ) -> None:
         self.name = name
         self._apply_vec = apply_vec
         self.size = size
         self._matrix = matrix
+        if dtype is None:
+            dtype = np.asarray(matrix).dtype if matrix is not None else np.float64
+        self.dtype = np.dtype(dtype)
 
     def apply(self, x: Vector) -> Vector:
         return self._apply_vec(x)
@@ -37,7 +41,7 @@ class Preconditioner:
 
     def as_linear_operator(self) -> LinearOperator:
         n = self.size
-        return LinearOperator((n, n), matvec=self.apply, dtype=np.float64)
+        return LinearOperator((n, n), matvec=self.apply, dtype=self.dtype)
 
 
 @dataclass(frozen=True)
@@ -56,7 +60,7 @@ class PreconditionerFactory:
 
 def identity_preconditioner(A: Array) -> Preconditioner:
     n = A.shape[0]
-    return Preconditioner("None", lambda x: x.copy(), n)
+    return Preconditioner("None", lambda x: x.copy(), n, dtype=A.dtype)
 
 
 def diagonal_preconditioner(A: Array, rcond: float = 1e-12) -> Preconditioner:
@@ -67,7 +71,7 @@ def diagonal_preconditioner(A: Array, rcond: float = 1e-12) -> Preconditioner:
     def apply(x: Vector) -> Vector:
         return scale * x
 
-    return Preconditioner("Diagonal", apply, n)
+    return Preconditioner("Diagonal", apply, n, dtype=A.dtype)
 
 
 def lu_preconditioner(A: Array) -> Preconditioner:
@@ -77,12 +81,12 @@ def lu_preconditioner(A: Array) -> Preconditioner:
     def apply(x: Vector) -> Vector:
         return lu_solve((lu, piv), x)
 
-    return Preconditioner("LU", apply, n)
+    return Preconditioner("LU", apply, n, dtype=A.dtype)
 
 
 def _circulant_average_diagonals(A: Array) -> Vector:
     n = A.shape[0]
-    c = np.zeros(n, dtype=np.float64)
+    c = np.zeros(n, dtype=A.dtype)
     for k in range(n):
         idx = (np.arange(n) + k) % n
         c[k] = np.mean(A[np.arange(n), idx])
@@ -91,6 +95,8 @@ def _circulant_average_diagonals(A: Array) -> Vector:
 
 def circulant_preconditioner(A: Array, rcond: float = 1e-12) -> Preconditioner:
     n = A.shape[0]
+    dtype = np.dtype(A.dtype)
+    is_complex = np.issubdtype(dtype, np.complexfloating)
     c = _circulant_average_diagonals(A)
     eigvals = np.fft.fft(c)
     max_abs = np.max(np.abs(eigvals))
@@ -101,7 +107,9 @@ def circulant_preconditioner(A: Array, rcond: float = 1e-12) -> Preconditioner:
     def apply(x: Vector) -> Vector:
         fx = np.fft.fft(x)
         y = np.fft.ifft(inv_eigs * fx)
-        return np.asarray(np.real(y), dtype=np.float64)
+        if is_complex or np.iscomplexobj(x):
+            return np.asarray(y, dtype=np.result_type(dtype, np.asarray(x).dtype))
+        return np.asarray(np.real(y), dtype=dtype)
 
     P = None
     if n <= 256:
@@ -110,7 +118,7 @@ def circulant_preconditioner(A: Array, rcond: float = 1e-12) -> Preconditioner:
             P = np.linalg.inv(C)
         except np.linalg.LinAlgError:
             P = None
-    return Preconditioner("Circulant", apply, n, matrix=P)
+    return Preconditioner("Circulant", apply, n, matrix=P, dtype=dtype)
 
 
 def svd_preconditioner(A: Array, rcond: float = 1e-12) -> Preconditioner:
@@ -120,11 +128,11 @@ def svd_preconditioner(A: Array, rcond: float = 1e-12) -> Preconditioner:
     inv_s = np.where(s > cutoff, 1.0 / s, 0.0)
 
     def apply(x: Vector) -> Vector:
-        y = U.T @ x
+        y = U.conj().T @ x
         y = inv_s * y
-        return Vt.T @ y
+        return Vt.conj().T @ y
 
-    return Preconditioner("SVD", apply, n)
+    return Preconditioner("SVD", apply, n, dtype=A.dtype)
 
 
 def default_preconditioners() -> Iterable[PreconditionerFactory]:

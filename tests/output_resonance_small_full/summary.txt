@@ -1,0 +1,71 @@
+Resonance region analysis
+
+Dataset: compressed_data
+Matrix size N: 36
+Scanned angular frequencies: 502
+Angular frequency window: [3.800468e+07, 4.199260e+07] rad/s
+Theoretical uncoupled omega0: 3.975984e+07 rad/s
+Theoretical uncoupled f0: 6.327976e+06 Hz
+Response metric for extrema: relative_gain
+
+Selected amplification / attenuation points:
+  - peak #1: omega=3.981954e+07, value=4.948161e+02, delta_to_omega0=5.969947e+04
+    neighborhood=[3.975586e+07, 3.988322e+07]
+    highest iteration rows:
+      * Circulant + GMRES: center_iter=77, neighbor_iter_mean=47.312
+      * Circulant + BiCGSTAB: center_iter=67, neighbor_iter_mean=71.562
+      * Circulant + LGMRES: center_iter=4, neighbor_iter_mean=4.500
+    strongest residual deviations:
+      * Circulant + LGMRES: center_res=7.484630e-07, neighbor_res_mean=4.595560e-07, ratio=1.629
+      * None + GMRES: center_res=2.026464e-12, neighbor_res_mean=1.806870e-12, ratio=1.122
+      * Diagonal + GMRES: center_res=2.026145e-12, neighbor_res_mean=1.806944e-12, ratio=1.121
+  - peak #2: omega=3.989118e+07, value=3.597983e+02, delta_to_omega0=1.313388e+05
+    neighborhood=[3.982750e+07, 3.995486e+07]
+    highest iteration rows:
+      * Circulant + BiCGSTAB: center_iter=74, neighbor_iter_mean=67.625
+      * Circulant + GMRES: center_iter=34, neighbor_iter_mean=51.062
+      * Diagonal + GMRES: center_iter=3, neighbor_iter_mean=3.000
+    strongest residual deviations:
+      * Circulant + BiCGSTAB: center_res=9.092913e-07, neighbor_res_mean=6.516880e-07, ratio=1.395
+      * Circulant + GMRES: center_res=5.213224e-07, neighbor_res_mean=5.027416e-07, ratio=1.037
+      * RidgeApprox + LGMRES: center_res=1.344419e-12, neighbor_res_mean=1.364351e-12, ratio=0.985
+  - peak #3: omega=3.821164e+07, value=7.485031e+01, delta_to_omega0=-1.548206e+06
+    neighborhood=[3.814796e+07, 3.827532e+07]
+    highest iteration rows:
+      * Circulant + BiCGSTAB: center_iter=71, neighbor_iter_mean=65.188
+      * Circulant + GMRES: center_iter=36, neighbor_iter_mean=38.875
+      * Diagonal + GMRES: center_iter=3, neighbor_iter_mean=3.000
+    strongest residual deviations:
+      * SVD + LGMRES: center_res=6.693326e-15, neighbor_res_mean=4.944391e-15, ratio=1.354
+      * LU + BiCGSTAB: center_res=2.070364e-15, neighbor_res_mean=1.625327e-15, ratio=1.274
+      * SVD + GMRES: center_res=5.936402e-15, neighbor_res_mean=4.970730e-15, ratio=1.194
+  - trough #1: omega=4.199260e+07, value=1.747435e+01, delta_to_omega0=2.232760e+06
+    neighborhood=[4.192892e+07, 4.199260e+07]
+    highest iteration rows:
+      * Circulant + BiCGSTAB: center_iter=29, neighbor_iter_mean=30.500
+      * Circulant + GMRES: center_iter=23, neighbor_iter_mean=23.000
+      * Diagonal + GMRES: center_iter=3, neighbor_iter_mean=3.000
+    strongest residual deviations:
+      * Circulant + BiCGSTAB: center_res=7.784134e-07, neighbor_res_mean=6.518185e-07, ratio=1.194
+      * RidgeApprox + BiCGSTAB: center_res=4.270426e-13, neighbor_res_mean=4.081259e-13, ratio=1.046
+      * RidgeApprox + LGMRES: center_res=3.012407e-13, neighbor_res_mean=2.958329e-13, ratio=1.018
+  - trough #2: omega=4.192096e+07, value=1.805307e+01, delta_to_omega0=2.161121e+06
+    neighborhood=[4.185729e+07, 4.198464e+07]
+    highest iteration rows:
+      * Circulant + BiCGSTAB: center_iter=34, neighbor_iter_mean=30.875
+      * Circulant + GMRES: center_iter=23, neighbor_iter_mean=23.000
+      * Diagonal + GMRES: center_iter=3, neighbor_iter_mean=3.000
+    strongest residual deviations:
+      * LU + BiCGSTAB: center_res=9.229682e-16, neighbor_res_mean=8.758329e-16, ratio=1.054
+      * LU + LGMRES: center_res=9.480528e-16, neighbor_res_mean=9.090714e-16, ratio=1.043
+      * LU + GMRES: center_res=9.479724e-16, neighbor_res_mean=9.164233e-16, ratio=1.034
+  - trough #3: omega=3.853800e+07, value=3.188585e+01, delta_to_omega0=-1.221849e+06
+    neighborhood=[3.847432e+07, 3.860167e+07]
+    highest iteration rows:
+      * Circulant + BiCGSTAB: center_iter=77, neighbor_iter_mean=71.375
+      * Circulant + GMRES: center_iter=35, neighbor_iter_mean=39.375
+      * Circulant + LGMRES: center_iter=4, neighbor_iter_mean=3.812
+    strongest residual deviations:
+      * SVD + BiCGSTAB: center_res=4.956510e-15, neighbor_res_mean=3.305371e-15, ratio=1.500
+      * SVD + LGMRES: center_res=4.944334e-15, neighbor_res_mean=3.334744e-15, ratio=1.483
+      * SVD + GMRES: center_res=4.907139e-15, neighbor_res_mean=3.321153e-15, ratio=1.478

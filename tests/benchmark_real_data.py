@@ -11,7 +11,6 @@ from typing import Iterable
 
 import numpy as np
 
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 PRECONDITIONER_SRC = ROOT_DIR / "preconditioner"
 if str(PRECONDITIONER_SRC) not in sys.path:

@@ -168,5 +168,3 @@ python tests/benchmark_real_data.py --dataset small --ridge-reg 1e-4 --ridge-tra
 Открыть:
 
 - `tests/benchmark_real_data.ipynb`
-
-В ноутбуке уже есть импорт `main(...)`, который запускает тот же самый код.

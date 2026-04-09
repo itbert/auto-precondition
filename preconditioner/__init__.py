@@ -22,7 +22,7 @@ from .experiments import (
     AggregatedRecord,
     run_experiments,
     aggregate_records,
-    aggregate_timing_by_kappa,
+    aggregate_timing_by_kappa
 )
 from .metrics import condition_number, compute_kappa_metrics
 from .plotting import (

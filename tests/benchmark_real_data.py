@@ -16,6 +16,7 @@ PRECONDITIONER_SRC = ROOT_DIR / "preconditioner"
 if str(PRECONDITIONER_SRC) not in sys.path:
     sys.path.insert(0, str(PRECONDITIONER_SRC))
 
+from cnn import ConvolutionalInverseApproximator, torch_is_available
 from ml import RidgeInverseApproximator, TargetKind
 from preconditioners import PreconditionerFactory, default_preconditioners
 from solvers import SolverResult, default_solvers
@@ -216,6 +217,71 @@ def build_ridge_preconditioner_factory(
     )
 
 
+def build_cnn_preconditioner_factory(
+    dataset: CompressedDataset,
+    freqs: np.ndarray,
+    *,
+    cnn_train_limit: int | None = None,
+    cnn_hidden_channels: int = 12,
+    cnn_basis_rank: int = 6,
+    cnn_epochs: int = 10,
+    cnn_batch_size: int = 2,
+    cnn_learning_rate: float = 2e-3,
+    cnn_consistency_weight: float = 0.3,
+    cnn_max_n: int = 1024,
+    verbose: bool = True,
+) -> tuple[PreconditionerFactory | None, str]:
+    if not torch_is_available():
+        return None, "CNNApprox: skipped because PyTorch is not installed"
+    if dataset.n > cnn_max_n:
+        return (
+            None,
+            f"CNNApprox: skipped for N={dataset.n} "
+            f"(cnn_max_n={cnn_max_n})",
+        )
+
+    train_freqs = _select_training_freqs(freqs, cnn_train_limit)
+    if len(train_freqs) == 0:
+        return None, "CNNApprox: skipped because no frequencies were selected"
+
+    if verbose:
+        print(
+            f"[CNNApprox] training on {len(train_freqs)} matrices "
+            f"(basis_rank={cnn_basis_rank}, epochs={cnn_epochs})..."
+        )
+
+    t0 = perf_counter()
+    train_matrices = [build_impedance_matrix(dataset, float(omega)) for omega in train_freqs]
+    train_targets = [np.linalg.inv(A) for A in train_matrices]
+    model = ConvolutionalInverseApproximator(
+        matrix_size=dataset.n,
+        hidden_channels=cnn_hidden_channels,
+        basis_rank=cnn_basis_rank,
+        epochs=cnn_epochs,
+        batch_size=cnn_batch_size,
+        learning_rate=cnn_learning_rate,
+        consistency_weight=cnn_consistency_weight,
+    ).fit(train_matrices, train_targets, verbose=verbose)
+    elapsed = perf_counter() - t0
+
+    if verbose:
+        print(f"[CNNApprox] trained in {elapsed:.3f} s")
+        print(f"[CNNApprox] {model.describe_architecture()}")
+
+    return (
+        PreconditionerFactory(
+            "CNNApprox",
+            lambda A, model=model: model.as_preconditioner(A, name="CNNApprox"),
+            max_n=cnn_max_n,
+            notes="Low-rank CNN inverse correction on real data",
+        ),
+        (
+            f"CNNApprox: trained on {len(train_freqs)} matrices; "
+            f"offline training time {elapsed:.3f} s is not included in per-matrix timings"
+        ),
+    )
+
+
 def summarize_records(records: Iterable[SolveRecord]) -> list[SummaryRecord]:
     grouped: dict[tuple[str, str], list[SolveRecord]] = {}
     for record in records:
@@ -263,10 +329,19 @@ def run_real_data_benchmark(
     restart: int = 40,
     ignore_size_limits: bool = False,
     include_ridge: bool = True,
+    include_cnn: bool = False,
     ridge_reg: float = 1e-3,
     ridge_target: TargetKind = "pinv",
     ridge_train_limit: int | None = None,
     ridge_max_n: int = 64,
+    cnn_train_limit: int | None = None,
+    cnn_hidden_channels: int = 12,
+    cnn_basis_rank: int = 6,
+    cnn_epochs: int = 10,
+    cnn_batch_size: int = 2,
+    cnn_learning_rate: float = 2e-3,
+    cnn_consistency_weight: float = 0.3,
+    cnn_max_n: int = 1024,
     verbose: bool = True,
 ) -> tuple[list[SummaryRecord], list[SolveRecord], list[str]]:
     dataset = load_compressed_dataset(data_dir)
@@ -298,6 +373,27 @@ def run_real_data_benchmark(
             preconditioners.append(ridge_factory)
             if verbose:
                 print(ridge_message)
+
+    if include_cnn:
+        cnn_factory, cnn_message = build_cnn_preconditioner_factory(
+            dataset,
+            freqs,
+            cnn_train_limit=cnn_train_limit,
+            cnn_hidden_channels=cnn_hidden_channels,
+            cnn_basis_rank=cnn_basis_rank,
+            cnn_epochs=cnn_epochs,
+            cnn_batch_size=cnn_batch_size,
+            cnn_learning_rate=cnn_learning_rate,
+            cnn_consistency_weight=cnn_consistency_weight,
+            cnn_max_n=cnn_max_n,
+            verbose=verbose,
+        )
+        if cnn_factory is None:
+            skipped.append(cnn_message)
+        else:
+            preconditioners.append(cnn_factory)
+            if verbose:
+                print(cnn_message)
 
     for preconditioner in preconditioners:
         if not ignore_size_limits and not preconditioner.supports(dataset.n):
@@ -452,10 +548,19 @@ def main(
     restart: int = 40,
     ignore_size_limits: bool = False,
     include_ridge: bool = True,
+    include_cnn: bool = False,
     ridge_reg: float = 1e-3,
     ridge_target: TargetKind = "pinv",
     ridge_train_limit: int | None = None,
     ridge_max_n: int = 64,
+    cnn_train_limit: int | None = None,
+    cnn_hidden_channels: int = 12,
+    cnn_basis_rank: int = 6,
+    cnn_epochs: int = 10,
+    cnn_batch_size: int = 2,
+    cnn_learning_rate: float = 2e-3,
+    cnn_consistency_weight: float = 0.3,
+    cnn_max_n: int = 1024,
     print_raw: bool = False,
     csv_dir: Path | None = None,
 ) -> tuple[list[SummaryRecord], list[SolveRecord]]:
@@ -469,10 +574,19 @@ def main(
         restart=restart,
         ignore_size_limits=ignore_size_limits,
         include_ridge=include_ridge,
+        include_cnn=include_cnn,
         ridge_reg=ridge_reg,
         ridge_target=ridge_target,
         ridge_train_limit=ridge_train_limit,
         ridge_max_n=ridge_max_n,
+        cnn_train_limit=cnn_train_limit,
+        cnn_hidden_channels=cnn_hidden_channels,
+        cnn_basis_rank=cnn_basis_rank,
+        cnn_epochs=cnn_epochs,
+        cnn_batch_size=cnn_batch_size,
+        cnn_learning_rate=cnn_learning_rate,
+        cnn_consistency_weight=cnn_consistency_weight,
+        cnn_max_n=cnn_max_n,
     )
     print_summary(summary, skipped=skipped)
 
@@ -536,6 +650,59 @@ def parse_args() -> argparse.Namespace:
         help="Maximum matrix size for RidgeApprox training",
     )
     parser.add_argument(
+        "--cnn",
+        action="store_true",
+        help="Enable CNNApprox preconditioner from preconditioner/cnn.py",
+    )
+    parser.add_argument(
+        "--cnn-train-limit",
+        type=int,
+        default=None,
+        help="Optional number of frequencies used to train CNNApprox",
+    )
+    parser.add_argument(
+        "--cnn-hidden-channels",
+        type=int,
+        default=12,
+        help="Base CNN channel count for CNNApprox",
+    )
+    parser.add_argument(
+        "--cnn-basis-rank",
+        type=int,
+        default=6,
+        help="Low-rank decoder size for CNNApprox",
+    )
+    parser.add_argument(
+        "--cnn-epochs",
+        type=int,
+        default=10,
+        help="Training epochs for CNNApprox",
+    )
+    parser.add_argument(
+        "--cnn-batch-size",
+        type=int,
+        default=2,
+        help="Training batch size for CNNApprox",
+    )
+    parser.add_argument(
+        "--cnn-learning-rate",
+        type=float,
+        default=2e-3,
+        help="Learning rate for CNNApprox",
+    )
+    parser.add_argument(
+        "--cnn-consistency-weight",
+        type=float,
+        default=0.3,
+        help="Consistency loss weight for CNNApprox",
+    )
+    parser.add_argument(
+        "--cnn-max-n",
+        type=int,
+        default=1024,
+        help="Maximum matrix size for CNNApprox training",
+    )
+    parser.add_argument(
         "--ignore-size-limits",
         action="store_true",
         help="Force expensive preconditioners even if their nominal max_n limit is exceeded",
@@ -567,10 +734,19 @@ if __name__ == "__main__":
         restart=args.restart,
         ignore_size_limits=args.ignore_size_limits,
         include_ridge=not args.no_ridge,
+        include_cnn=args.cnn,
         ridge_reg=args.ridge_reg,
         ridge_target=args.ridge_target,
         ridge_train_limit=args.ridge_train_limit,
         ridge_max_n=args.ridge_max_n,
+        cnn_train_limit=args.cnn_train_limit,
+        cnn_hidden_channels=args.cnn_hidden_channels,
+        cnn_basis_rank=args.cnn_basis_rank,
+        cnn_epochs=args.cnn_epochs,
+        cnn_batch_size=args.cnn_batch_size,
+        cnn_learning_rate=args.cnn_learning_rate,
+        cnn_consistency_weight=args.cnn_consistency_weight,
+        cnn_max_n=args.cnn_max_n,
         print_raw=args.print_raw,
         csv_dir=args.csv_dir,
     )

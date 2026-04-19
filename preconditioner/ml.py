@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Literal, Optional, Sequence
+from typing import Iterable, Literal, Optional, Protocol, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -18,6 +18,10 @@ except ImportError:
 
 Array = NDArray[np.generic]
 TargetKind = Literal["inverse", "pinv", "diagonal_inverse"]
+
+
+class SupportsInversePrediction(Protocol):
+    def predict_inverse(self, A: Array) -> Array: ...
 
 
 @dataclass(frozen=True)
@@ -127,7 +131,7 @@ def build_inverse_dataset(
 
 
 def evaluate_inverse_model(
-    model: RidgeInverseApproximator,
+    model: SupportsInversePrediction,
     matrices: Iterable[Array],
     targets: Iterable[Array],
     *,

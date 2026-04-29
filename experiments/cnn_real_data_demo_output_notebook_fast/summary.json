@@ -1,0 +1,31 @@
+{
+  "dataset": "/Users/albert/Research/auto-preconditioner/tests/data/compressed_data555",
+  "matrix_size": 450,
+  "train_frequencies_hz": [
+    38004679.95329644,
+    38012639.882075004,
+    38028559.73963215,
+    38036519.668410726,
+    38052439.52596787,
+    38060399.45474645,
+    38076319.31230359,
+    38092239.169860736
+  ],
+  "test_frequencies_hz": [
+    38020599.81085358,
+    38044479.5971893,
+    38068359.383525014,
+    38084279.24108216
+  ],
+  "architecture": "Jacobi + low-rank CNN correction: hidden_channels=10, dilations=(1, 2, 4, 2, 1), basis_rank=4, aux=row/column coordinates, diagonal mask, Jacobi residual channels, consistency_weight=0.300",
+  "gmres_none_mean_iter": 47.25,
+  "gmres_diag_mean_iter": 47.25,
+  "gmres_cnn_mean_iter": 5.5,
+  "diag_consistency_mean": 0.07210382807330114,
+  "cnn_consistency_mean": 0.0038849359811329457,
+  "cnn_relative_inverse_error_mean": 0.24933565599915697,
+  "eval_rel_error_mean": 0.24933565599915697,
+  "eval_rel_error_std": 0.09264446171913167,
+  "eval_kappa_mean": 1.4465007796024907,
+  "eval_kappa_std": 0.163698651701601
+}

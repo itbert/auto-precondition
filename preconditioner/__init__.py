@@ -45,6 +45,14 @@ from .ml import (
     build_inverse_dataset,
     evaluate_inverse_model,
 )
+from .cnn import (
+    CNNInverseApproximatorConfig,
+    CNNTrainingHistory,
+    ConvolutionalInverseApproximator,
+    build_cnn_preconditioner_factory,
+    evaluate_cnn_inverse_model,
+    torch_is_available,
+)
 
 __all__ = [
     "MatrixFamily",
@@ -81,4 +89,10 @@ __all__ = [
     "InverseApproximationMetrics",
     "build_inverse_dataset",
     "evaluate_inverse_model",
+    "CNNInverseApproximatorConfig",
+    "CNNTrainingHistory",
+    "ConvolutionalInverseApproximator",
+    "build_cnn_preconditioner_factory",
+    "evaluate_cnn_inverse_model",
+    "torch_is_available",
 ]

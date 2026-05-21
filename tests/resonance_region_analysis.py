@@ -33,6 +33,7 @@ from benchmark_real_data import (  # noqa: E402
     TargetKind,
     build_impedance_matrix,
     build_rhs,
+    build_cnn_preconditioner_factory,
     build_ridge_preconditioner_factory,
     default_preconditioners,
     default_solvers,
@@ -42,6 +43,13 @@ from benchmark_real_data import (  # noqa: E402
 
 
 ResponseMetric = Literal["relative_gain", "response_norm", "max_current_abs"]
+SolvePlotMetric = Literal[
+    "iterations",
+    "residual",
+    "preconditioner_time",
+    "solve_time",
+    "total_time",
+]
 
 
 @dataclass(frozen=True)
@@ -142,6 +150,14 @@ def select_analysis_omegas(
         return omegas
     indices = np.linspace(0, len(omegas) - 1, num=limit, dtype=int)
     return omegas[np.unique(indices)]
+
+
+def select_uniform_training_omegas(omegas: Sequence[float], limit: int | None) -> np.ndarray:
+    arr = np.asarray(omegas, dtype=np.float64)
+    if limit is None or limit >= len(arr):
+        return arr
+    indices = np.linspace(0, len(arr) - 1, num=limit, dtype=int)
+    return arr[np.unique(indices)]
 
 
 def _relative_residual(A: np.ndarray, x: np.ndarray, b: np.ndarray) -> float:
@@ -341,10 +357,19 @@ def _resolve_preconditioner_factories(
     *,
     ignore_size_limits: bool,
     include_ridge: bool,
+    include_cnn: bool,
     ridge_reg: float,
     ridge_target: TargetKind,
     ridge_train_limit: int | None,
     ridge_max_n: int,
+    cnn_train_limit: int | None,
+    cnn_hidden_channels: int,
+    cnn_basis_rank: int,
+    cnn_epochs: int,
+    cnn_batch_size: int,
+    cnn_learning_rate: float,
+    cnn_consistency_weight: float,
+    cnn_max_n: int,
     preconditioner_names: Sequence[str] | None,
     verbose: bool,
 ) -> tuple[list, list[str]]:
@@ -367,6 +392,30 @@ def _resolve_preconditioner_factories(
             factories.append(ridge_factory)
             if verbose:
                 print(ridge_message)
+
+    wants_cnn = include_cnn or (
+        preconditioner_names is not None and "CNNApprox" in preconditioner_names
+    )
+    if wants_cnn:
+        cnn_factory, cnn_message = build_cnn_preconditioner_factory(
+            dataset,
+            omegas,
+            cnn_train_limit=cnn_train_limit,
+            cnn_hidden_channels=cnn_hidden_channels,
+            cnn_basis_rank=cnn_basis_rank,
+            cnn_epochs=cnn_epochs,
+            cnn_batch_size=cnn_batch_size,
+            cnn_learning_rate=cnn_learning_rate,
+            cnn_consistency_weight=cnn_consistency_weight,
+            cnn_max_n=cnn_max_n,
+            verbose=verbose,
+        )
+        if cnn_factory is None:
+            skipped.append(cnn_message)
+        else:
+            factories.append(cnn_factory)
+            if verbose:
+                print(cnn_message)
 
     if preconditioner_names is not None:
         by_name = {factory.name: factory for factory in factories}
@@ -411,34 +460,70 @@ def run_frequency_solver_benchmark(
     restart: int = 40,
     ignore_size_limits: bool = False,
     include_ridge: bool = True,
+    include_cnn: bool = False,
     ridge_reg: float = 1e-3,
     ridge_target: TargetKind = "pinv",
     ridge_train_limit: int | None = None,
     ridge_max_n: int = 64,
+    cnn_train_limit: int | None = None,
+    cnn_hidden_channels: int = 12,
+    cnn_basis_rank: int = 6,
+    cnn_epochs: int = 10,
+    cnn_batch_size: int = 2,
+    cnn_learning_rate: float = 2e-3,
+    cnn_consistency_weight: float = 0.3,
+    cnn_max_n: int = 1024,
+    cnn_test_only: bool = False,
     preconditioner_names: Sequence[str] | None = None,
     solver_names: Sequence[str] | None = None,
     verbose: bool = True,
 ) -> tuple[list[FrequencySolveRecord], list[str]]:
+    omega_array = np.asarray(omegas, dtype=np.float64)
     factories, skipped = _resolve_preconditioner_factories(
         dataset,
-        np.asarray(omegas, dtype=np.float64),
+        omega_array,
         ignore_size_limits=ignore_size_limits,
         include_ridge=include_ridge,
+        include_cnn=include_cnn,
         ridge_reg=ridge_reg,
         ridge_target=ridge_target,
         ridge_train_limit=ridge_train_limit,
         ridge_max_n=ridge_max_n,
+        cnn_train_limit=cnn_train_limit,
+        cnn_hidden_channels=cnn_hidden_channels,
+        cnn_basis_rank=cnn_basis_rank,
+        cnn_epochs=cnn_epochs,
+        cnn_batch_size=cnn_batch_size,
+        cnn_learning_rate=cnn_learning_rate,
+        cnn_consistency_weight=cnn_consistency_weight,
+        cnn_max_n=cnn_max_n,
         preconditioner_names=preconditioner_names,
         verbose=verbose,
     )
     solvers = _resolve_solvers(restart, solver_names)
     response_lookup = {float(item.omega_rad_s): item for item in response}
+    has_cnn_factory = "CNNApprox" in {factory.name for factory in factories}
+    if cnn_test_only and has_cnn_factory and cnn_train_limit is None:
+        raise ValueError("--cnn-test-only requires --cnn-train-limit")
+    cnn_training_omegas = set(
+        float(omega) for omega in select_uniform_training_omegas(omega_array, cnn_train_limit)
+    )
+    if cnn_test_only and has_cnn_factory:
+        skipped.append(
+            f"CNNApprox: solver evaluation excludes {len(cnn_training_omegas)} training frequencies"
+        )
 
     records: list[FrequencySolveRecord] = []
     for factory in factories:
         if verbose:
             print(f"[{factory.name}] scanning {len(omegas)} angular frequencies...")
         for omega in omegas:
+            if (
+                cnn_test_only
+                and factory.name == "CNNApprox"
+                and float(omega) in cnn_training_omegas
+            ):
+                continue
             Z = build_impedance_matrix(dataset, float(omega))
             rhs = build_rhs(dataset, float(omega))
             response_rec = response_lookup[float(omega)]
@@ -619,7 +704,40 @@ def _metric_label(metric: str) -> str:
         return "Iterations"
     if metric == "residual":
         return "Relative residual"
+    if metric == "preconditioner_time":
+        return "Preconditioner build time [s]"
+    if metric == "solve_time":
+        return "Solver time [s]"
+    if metric == "total_time":
+        return "Total time [s]"
     raise ValueError(f"Unknown metric: {metric!r}")
+
+
+def _solve_record_value(record: FrequencySolveRecord, metric: SolvePlotMetric) -> float:
+    if metric == "iterations":
+        return float(record.n_iter)
+    if metric == "residual":
+        return float(record.residual)
+    if metric == "preconditioner_time":
+        return float(record.preconditioner_time_s)
+    if metric == "solve_time":
+        return float(record.solve_time_s)
+    if metric == "total_time":
+        return float(record.total_time_s)
+    raise ValueError(f"Unknown metric: {metric!r}")
+
+
+def _ordered_preconditioners(names: Iterable[str]) -> list[str]:
+    preferred = {
+        "None": 0,
+        "Diagonal": 1,
+        "Circulant": 2,
+        "LU": 3,
+        "SVD": 4,
+        "RidgeApprox": 5,
+        "CNNApprox": 6,
+    }
+    return sorted(set(names), key=lambda name: (preferred.get(name, 100), name))
 
 
 def _color_cycle() -> list[str]:
@@ -689,20 +807,17 @@ def plot_metric_vs_omega(
     extrema: Sequence[ExtremumRecord],
     *,
     solver: str,
-    metric: Literal["iterations", "residual"],
+    metric: SolvePlotMetric,
     theoretical_omega: float,
     output_path: Path,
 ) -> None:
-    metric_getter = (
-        (lambda item: float(item.n_iter))
-        if metric == "iterations"
-        else (lambda item: float(item.residual))
-    )
     ylabel = _metric_label(metric)
     fig, ax = plt.subplots(figsize=(12, 5))
     colors = _color_cycle()
 
-    preconditioners = sorted({record.preconditioner for record in records if record.solver == solver})
+    preconditioners = _ordered_preconditioners(
+        record.preconditioner for record in records if record.solver == solver
+    )
     for idx, preconditioner in enumerate(preconditioners):
         series = sorted(
             (
@@ -715,7 +830,8 @@ def plot_metric_vs_omega(
         if not series:
             continue
         xvals = _omega_to_mrad([item.omega_rad_s for item in series])
-        yvals = [metric_getter(item) for item in series]
+        yvals = np.asarray([_solve_record_value(item, metric) for item in series], dtype=np.float64)
+        converged = np.asarray([item.converged for item in series], dtype=bool)
         ax.plot(
             xvals,
             yvals,
@@ -725,6 +841,17 @@ def plot_metric_vs_omega(
             color=colors[idx % len(colors)],
             label=preconditioner,
         )
+        if metric == "iterations" and np.any(~converged):
+            ax.scatter(
+                xvals[~converged],
+                yvals[~converged],
+                marker="x",
+                s=34,
+                color=colors[idx % len(colors)],
+                linewidths=1.0,
+                label="_nolegend_",
+                zorder=4,
+            )
 
     for point in extrema:
         ax.axvline(
@@ -737,11 +864,13 @@ def plot_metric_vs_omega(
     if theoretical_omega > 0.0:
         ax.axvline(theoretical_omega / 1e6, color="black", linestyle="--", linewidth=1.0)
 
-    if metric == "residual":
+    if metric in {"residual", "preconditioner_time", "solve_time", "total_time"}:
         finite_positive = [
-            record.residual
+            _solve_record_value(record, metric)
             for record in records
-            if record.solver == solver and np.isfinite(record.residual) and record.residual > 0.0
+            if record.solver == solver
+            and np.isfinite(_solve_record_value(record, metric))
+            and _solve_record_value(record, metric) > 0.0
         ]
         if finite_positive:
             ax.set_yscale("log")
@@ -751,6 +880,7 @@ def plot_metric_vs_omega(
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.3)
     ax.legend(ncol=min(3, max(1, len(preconditioners))))
+    ax.margins(x=0.01)
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
@@ -777,7 +907,9 @@ def plot_local_metric_window(
     colors = _color_cycle()
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    preconditioners = sorted({record.preconditioner for record in records if record.solver == solver})
+    preconditioners = _ordered_preconditioners(
+        record.preconditioner for record in records if record.solver == solver
+    )
     for idx, preconditioner in enumerate(preconditioners):
         series = sorted(
             (
@@ -843,7 +975,9 @@ def plot_histogram_for_point(
     colors = _color_cycle()
 
     fig, ax = plt.subplots(figsize=(9, 4))
-    preconditioners = sorted({record.preconditioner for record in records if record.solver == solver})
+    preconditioners = _ordered_preconditioners(
+        record.preconditioner for record in records if record.solver == solver
+    )
 
     all_values: list[float] = []
     grouped_values: list[tuple[str, list[float]]] = []
@@ -979,7 +1113,7 @@ def write_summary_report(
                 )
     if skipped:
         lines.append("")
-        lines.append("Skipped:")
+        lines.append("Skipped / notes:")
         for item in skipped:
             lines.append(f"  - {item}")
 
@@ -1022,6 +1156,30 @@ def save_plots(
             metric="residual",
             theoretical_omega=theoretical_omega,
             output_path=output_dir / f"residual_vs_omega__{solver}.png",
+        )
+        plot_metric_vs_omega(
+            solve_records,
+            extrema,
+            solver=solver,
+            metric="total_time",
+            theoretical_omega=theoretical_omega,
+            output_path=output_dir / f"time_vs_omega__{solver}.png",
+        )
+        plot_metric_vs_omega(
+            solve_records,
+            extrema,
+            solver=solver,
+            metric="solve_time",
+            theoretical_omega=theoretical_omega,
+            output_path=output_dir / f"solve_time_vs_omega__{solver}.png",
+        )
+        plot_metric_vs_omega(
+            solve_records,
+            extrema,
+            solver=solver,
+            metric="preconditioner_time",
+            theoretical_omega=theoretical_omega,
+            output_path=output_dir / f"preconditioner_time_vs_omega__{solver}.png",
         )
 
         for point in extrema:
@@ -1079,10 +1237,20 @@ def main(
     restart: int = 40,
     ignore_size_limits: bool = False,
     include_ridge: bool = True,
+    include_cnn: bool = False,
     ridge_reg: float = 1e-3,
     ridge_target: TargetKind = "pinv",
     ridge_train_limit: int | None = None,
     ridge_max_n: int = 64,
+    cnn_train_limit: int | None = None,
+    cnn_hidden_channels: int = 12,
+    cnn_basis_rank: int = 6,
+    cnn_epochs: int = 10,
+    cnn_batch_size: int = 2,
+    cnn_learning_rate: float = 2e-3,
+    cnn_consistency_weight: float = 0.3,
+    cnn_max_n: int = 1024,
+    cnn_test_only: bool = False,
     preconditioners: Sequence[str] | None = None,
     solvers: Sequence[str] | None = None,
     output_dir: Path | None = None,
@@ -1126,10 +1294,20 @@ def main(
         restart=restart,
         ignore_size_limits=ignore_size_limits,
         include_ridge=include_ridge,
+        include_cnn=include_cnn,
         ridge_reg=ridge_reg,
         ridge_target=ridge_target,
         ridge_train_limit=ridge_train_limit,
         ridge_max_n=ridge_max_n,
+        cnn_train_limit=cnn_train_limit,
+        cnn_hidden_channels=cnn_hidden_channels,
+        cnn_basis_rank=cnn_basis_rank,
+        cnn_epochs=cnn_epochs,
+        cnn_batch_size=cnn_batch_size,
+        cnn_learning_rate=cnn_learning_rate,
+        cnn_consistency_weight=cnn_consistency_weight,
+        cnn_max_n=cnn_max_n,
+        cnn_test_only=cnn_test_only,
         preconditioner_names=preconditioners,
         solver_names=solvers,
         verbose=verbose,
@@ -1177,7 +1355,7 @@ def main(
                 f"value={point.response_value:.6e}"
             )
         if skipped:
-            print("Skipped:")
+            print("Skipped / notes:")
             for item in skipped:
                 print(f"  - {item}")
 
@@ -1286,6 +1464,64 @@ def parse_args() -> argparse.Namespace:
         help="Maximum matrix size for RidgeApprox training.",
     )
     parser.add_argument(
+        "--cnn",
+        action="store_true",
+        help="Enable CNNApprox preconditioner.",
+    )
+    parser.add_argument(
+        "--cnn-train-limit",
+        type=int,
+        default=None,
+        help="Optional number of angular frequencies used to train CNNApprox.",
+    )
+    parser.add_argument(
+        "--cnn-hidden-channels",
+        type=int,
+        default=12,
+        help="Base CNN channel count for CNNApprox.",
+    )
+    parser.add_argument(
+        "--cnn-basis-rank",
+        type=int,
+        default=6,
+        help="Low-rank decoder size for CNNApprox.",
+    )
+    parser.add_argument(
+        "--cnn-epochs",
+        type=int,
+        default=10,
+        help="Training epochs for CNNApprox.",
+    )
+    parser.add_argument(
+        "--cnn-batch-size",
+        type=int,
+        default=2,
+        help="Training batch size for CNNApprox.",
+    )
+    parser.add_argument(
+        "--cnn-learning-rate",
+        type=float,
+        default=2e-3,
+        help="Learning rate for CNNApprox.",
+    )
+    parser.add_argument(
+        "--cnn-consistency-weight",
+        type=float,
+        default=0.3,
+        help="Consistency loss weight for CNNApprox.",
+    )
+    parser.add_argument(
+        "--cnn-max-n",
+        type=int,
+        default=1024,
+        help="Maximum matrix size for CNNApprox training.",
+    )
+    parser.add_argument(
+        "--cnn-test-only",
+        action="store_true",
+        help="Plot CNNApprox solver results only on frequencies excluded from CNN training.",
+    )
+    parser.add_argument(
         "--ignore-size-limits",
         action="store_true",
         help="Force expensive preconditioners even if their nominal max_n limit is exceeded.",
@@ -1326,10 +1562,20 @@ if __name__ == "__main__":
         restart=args.restart,
         ignore_size_limits=args.ignore_size_limits,
         include_ridge=not args.no_ridge,
+        include_cnn=args.cnn,
         ridge_reg=args.ridge_reg,
         ridge_target=args.ridge_target,
         ridge_train_limit=args.ridge_train_limit,
         ridge_max_n=args.ridge_max_n,
+        cnn_train_limit=args.cnn_train_limit,
+        cnn_hidden_channels=args.cnn_hidden_channels,
+        cnn_basis_rank=args.cnn_basis_rank,
+        cnn_epochs=args.cnn_epochs,
+        cnn_batch_size=args.cnn_batch_size,
+        cnn_learning_rate=args.cnn_learning_rate,
+        cnn_consistency_weight=args.cnn_consistency_weight,
+        cnn_max_n=args.cnn_max_n,
+        cnn_test_only=args.cnn_test_only,
         preconditioners=args.preconditioners,
         solvers=args.solvers,
         output_dir=args.output_dir,
